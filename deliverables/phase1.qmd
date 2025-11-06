@@ -15,7 +15,7 @@ format:
 from great_tables import GT # for pretty table displays
 import pandas as pd
 
-eod_data = pd.read_parquet('/home/noahg/MATH316/project2/data/eod_south_america_2015.parquet')
+eod_data = pd.read_parquet('../data/eod_south_america_2015.parquet')
 eod_data = eod_data.sample(frac=1, random_state=42).reset_index(drop=True)
 ```
 

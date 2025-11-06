@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 import altair as alt
 
 # read data from disk
-eod_data = pd.read_parquet('/home/noahg/MATH316/project2/data/0004691-251025141854904.parquet')
+eod_data = pd.read_parquet('../data/0004691-251025141854904.parquet')
 
 # derive event year from eventDate
 eod_data['eventYear'] = eod_data['eventDate'].dt.year
@@ -244,7 +244,7 @@ frontalis_chart = alt.Chart(frontalis_ts.reset_index()).mark_line(point=True).en
 )
 frontalis_chart
 ```
-- Goal: forecast sightings for Pyrrhura Frontalis (maroon-bellied conure) over next 6 months
+- Goal: forecast sightings for Pyrrhura Frontalis (maroon-bellied conure) over next 12 months
 - Observe: sightings generally peak during April, June, and September
     - Possible seasonality
 
