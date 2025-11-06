@@ -1,0 +1,128 @@
+---
+title: "MATH316 Project 2, Phase 1"
+format:
+    revealjs:
+        theme: default
+        embed-resources: true
+        slide-number: c/t
+        show-slide-number: all
+---
+
+```{python}
+#| label: setup
+#| include: false
+
+from great_tables import GT # for pretty table displays
+import pandas as pd
+
+eod_data = pd.read_parquet('/home/noahg/MATH316/project2/data/eod_south_america_2015.parquet')
+eod_data = eod_data.sample(frac=1, random_state=42).reset_index(drop=True)
+```
+
+## Background & Dataset Description
+- eBird - online birdwatcher observation data crowdsourcing platform
+- eBird Observation Dataset (EOD)
+    - Decades of bird observation data from around the world
+    - Very large dataset (millions of rows)
+- Our focus is on South America from 2015-2020
+    - For now we're using only the 2015 data for simplicity and ease of use, will scale up in future
+
+## Key Variables
+- genus/species - what birds were observed
+- countryCode/locality/stateProvince - generally where birds were observed during survey
+- individualCount - approx. how many birds were observed at time of survey (if available)
+- decimalLatitude/decimalLongitude - more precisely where birds were observed during survey
+- eventDate/recordedBy - when survey occurred and who conducted it
+
+## Basic Info
+```{python}
+table1 = GT(eod_data.head(n=1))
+table1.tab_header(title="EOD - South America, 2015", subtitle=f"Sample Row")
+```
+- Mostly categorical data
+    - Each row is a specie observed during a survey by a birdwatcher (may/may not contain exact count of observed specie)
+- ~2.2 million rows, 10 columns
+- 3,230 species of birds across 20 countries by 6,104 birdwatchers
+
+## Summary Statistics
+::: {.panel-tabset}
+### Categorical Variables
+```{python}
+eod_cat = eod_data.select_dtypes(include=['object','category'])
+desc_cat = eod_cat.describe()
+cat_nulls = eod_cat.isnull().sum().to_frame(name='nulls').transpose()
+
+table2 = GT(pd.concat([desc_cat, cat_nulls]).reset_index(drop=False, names='statistic').replace('top','mode'))
+table2.tab_header(title='Summary Statistics')
+```
+- Most common genus: Turdus (medium-sized insect-/plant-eating birds)
+- Most common specie: Andean Sparrow
+- Most sightings originate from BR (Brazil)
+
+### Other Variables
+```{python}
+eod_other = eod_data.select_dtypes(exclude=['object','category'])
+desc_other = eod_other.describe()
+other_nulls = eod_other.isnull().sum().to_frame(name='nulls').transpose()
+other_desc = pd.concat([desc_other, other_nulls]).reset_index(drop=False, names='statistic').replace('top','mode')
+other_desc = other_desc.drop(columns=['decimalLatitude','decimalLongitude'])
+other_desc['individualCount'] = other_desc['individualCount'].apply(lambda x: round(x, 3) if pd.notnull(x) else x)
+
+table3 = GT(other_desc)
+table3.tab_header(title='Summary Statistics')
+```
+:::
+
+## Sampling Distribution
+::: {.panel-tabset}
+### Top Birdwatchers
+```{python}
+top_observers = eod_data['recordedBy'].value_counts(sort=True).reset_index()
+table4 = GT(top_observers.head(n=10))
+table4.tab_header(title='Top 10 Birdwatchers')
+```
+
+### Birdwatcher Stats
+```{python}
+table5 = GT(top_observers.describe().reset_index(drop=False, names='statistic'))
+table5.tab_header(title='Birdwatcher Statistics')
+```
+- Median of 75 different sightings (but not necessarily surveys)
+- Standard deviation of ~910 - spread is high
+:::
+
+## Specie Distribution
+::: {.panel-tabset}
+### Most Common Species
+```{python}
+top_species = eod_data['species'].value_counts().reset_index()
+table6 = GT(top_species.head(n=10))
+table6.tab_header(title='Top 10 Most Common Species')
+```
+
+### Specie Stats
+```{python}
+table7 = GT(top_species.describe().reset_index(drop=False, names='statistic'))
+table7.tab_header(title='Specie Statistics')
+```
+- Median of 195 observations by birdwatchers
+- Standard deviation of ~1600 - very high spread
+:::
+
+## Research Questions
+1. How do individual birdwatcher survey habits affect the number and location of specie sightings?
+    - Did COVID have a significant impact on surveying in 2020?
+2. Is there an association between geographic location and season, and what/how many species were sighted?
+    - Has deforestation of Amazon rainforest significantly impacted birds? If so, which species?
+3. What is the forecast for the sightings of select species for the next 6 months?
+
+## Sources
+- https://ebird.org/about
+- https://www.gbif.org/
+- https://ebird.github.io/ebird-best-practices/
+- GBIF.org (30 October 2025) GBIF Occurrence Download  https://doi.org/10.15468/dl.9pgpn7
+
+## The End!
+- Questions?
+- Comments?
+- Suggestions?
