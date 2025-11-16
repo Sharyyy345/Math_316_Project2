@@ -1,0 +1,305 @@
+---
+title: "eBird Observations Dashboard"
+format:
+    dashboard:
+        theme: default
+        pages: true
+        orientation: columns
+        embed-resources: true
+        standalone: true
+---
+
+```{python}
+#| label: setup
+#| include: false
+
+from great_tables import GT # for pretty table displays
+import pandas as pd
+import matplotlib.pyplot as plt
+import altair as alt
+
+# read data from disk
+eod_data = pd.read_parquet('../data/0004691-251025141854904.parquet')
+
+# derive event year from eventDate
+eod_data['eventYear'] = eod_data['eventDate'].dt.year
+
+# derive event month from eventDate
+eod_data['eventMonth'] = eod_data['eventDate'].dt.month
+
+# define meteorological seasons for south america
+seasons = {
+    'summer': [12, 1, 2],
+    'fall': [3, 4, 5],
+    'winter': [6, 7, 8],
+    'spring': [9, 10, 11]
+}
+
+def month_to_season(month):
+    for season, months in seasons.items():
+        if month in months:
+            return season
+    return None
+
+eod_data['eventSeason'] = eod_data['eventMonth'].apply(month_to_season)
+```
+
+# Background & Dataset Description
+- eBird - online birdwatcher observation data crowdsourcing platform
+- eBird Observation Dataset (EOD)
+    - Decades of bird observation data from around the world
+    - Very large dataset (millions of rows)
+- Our focus is on South America from 2015-2020
+
+# Research Questions
+1. How do individual birdwatcher survey habits affect the number and location of specie sightings?
+2. Is there an association between geographic location and season, and what/how many species were sighted?
+    - Did COVID have a significant impact on birding in 2020?
+3. What is the forecast for the sightings of select species over the next 12 months?
+
+# Birdwatcher Checklist Habits
+::: {.panel-tabset}
+## Activity Habits
+```{python}
+birdwatcher_checklists = eod_data.groupby(['recordedBy', 'eventYear'])['checklist_id'].nunique()
+
+birdwatcher_checklists_pivot = birdwatcher_checklists.reset_index().pivot(index='recordedBy', columns='eventYear', values='checklist_id').fillna(0)
+
+birdwatcher_totals = birdwatcher_checklists_pivot.sum(axis=1)
+year_totals = birdwatcher_checklists_pivot.sum(axis=0)
+
+birdwatcher_checklists_pivot['Total Checklists'] = birdwatcher_totals
+birdwatcher_checklists_pivot['% of All Checklists'] = round((birdwatcher_totals / year_totals.sum()) * 100.0, ndigits=3)
+birdwatcher_checklists_pivot = birdwatcher_checklists_pivot.sort_values(by='% of All Checklists', ascending=False)
+
+top_10_birdwatchers = birdwatcher_checklists_pivot.head(n=10).drop(columns=['Total Checklists', '% of All Checklists']).reset_index().melt(id_vars=['recordedBy'], var_name='Year', value_name='Checklists')
+
+birdwatcher_selection = alt.selection_point(fields=['recordedBy'])
+top_10_birdwatchers_bar = alt.Chart(top_10_birdwatchers).mark_bar().encode(
+    x='recordedBy:N',
+    y='Checklists:Q',
+    color=alt.when(birdwatcher_selection).then(alt.Color('recordedBy:N')).otherwise(alt.value('lightgray')),
+    tooltip=['recordedBy:N', 'Year:O', 'Checklists:Q']
+).add_params(birdwatcher_selection).properties(
+    title='Birdwatchers Checklists by Year',
+    width=800,
+    height=400
+)
+
+top_10_birdwatchers_line = alt.Chart(top_10_birdwatchers).mark_line(point=True).encode(
+    x='Year:O',
+    y='Checklists:Q',
+    color=alt.Color('recordedBy', scale=alt.Scale(scheme='category20c')),
+    tooltip=['recordedBy:N', 'Year:O', 'Checklists:Q']
+).properties(
+    title='Birdwatchers Checklists over Years',
+    width=800,
+    height=400
+)
+
+top_10_birdwatchers_bar | top_10_birdwatchers_line.add_params(birdwatcher_selection).transform_filter(birdwatcher_selection)
+```
+
+- 39,222 birdwatchers, over 1.4 million checklists
+    - Multiple birdwatchers can be associated with same checklist
+- obsr501068 produced 6,293 checklists (0.436% of all checklists)
+    - No clear overall major contributors
+- Top 10 birdwatchers generally collected most of their samples in 2017 or 2019
+    - 9/10 see a noticeable dip in 2020 - could this be due to COVID and quarantining?
+
+## Seasonal Habits
+```{python}
+checklists_by_season_year = eod_data.groupby(['eventYear', 'eventSeason'])['checklist_id'].nunique().sort_index().reset_index()
+checklists_by_season_year = checklists_by_season_year.rename(columns={'checklist_id': 'totalChecklists'})
+checklists_by_season_year['eventYear'] = checklists_by_season_year['eventYear'].astype(str)
+
+seasonal_checklists_line = alt.Chart(checklists_by_season_year).mark_line(point=True).encode(
+    x='eventSeason:O',
+    y='totalChecklists:Q',
+    color=alt.Color('eventYear', scale=alt.Scale(scheme='category20c')),
+    tooltip=['eventYear:O', 'eventSeason:O', 'totalChecklists:Q']
+).properties(
+    title='Seasonal Checklist Trends by Year',
+    width=800,
+    height=400
+)
+
+seasonal_checklists_line
+```
+- Spring and Summer are when most checklists are conducted, indicating higher birdwatching activity during these seasons
+    - May introduce some seasonal bias
+
+## Regional Habits
+```{python}
+checklists_by_observer_country_year = eod_data.groupby(['recordedBy', 'countryCode', 'eventYear'])['checklist_id'].nunique().reset_index()
+checklists_by_observer_country_year_pivot = checklists_by_observer_country_year.pivot_table(index=['recordedBy', 'countryCode'], columns='eventYear', values='checklist_id', fill_value=0)
+
+# calculate total checklists per country per birdwatcher
+checklists_by_observer_country_year_pivot['Total Birdwatcher Checklists'] = checklists_by_observer_country_year_pivot.sum(axis=1).fillna(0)
+
+# calculate total checklists in each country across all years/birdwatchers
+country_checklist_totals = eod_data.groupby(['countryCode'])['checklist_id'].nunique()
+
+# calculate percentage of checklists per country for each birdwatcher
+def calculate_checklists_pct(row):
+    country = row.name[1] # get countryCode from MultiIndex
+    total_checklists_in_country = country_checklist_totals.get(country, 0)
+    if total_checklists_in_country > 0:
+        return round((row['Total Birdwatcher Checklists'] / total_checklists_in_country) * 100.0, ndigits=3)
+    else:
+        return 0.0
+checklists_by_observer_country_year_pivot['% of Total Country Checklists'] = checklists_by_observer_country_year_pivot.apply(calculate_checklists_pct, axis=1)
+
+checklists_by_observer_country_year_pivot.sort_values(by='% of Total Country Checklists', ascending=False).head(n=10).to_html()
+```
+
+- Individual birdwatchers can have a significant impact on the number of checklists for a country but not overall
+    - obsr626844 contributed >%56 of Curaçao's checklists
+:::
+
+# Location & Season Associations
+::: {.panel-tabset}
+## Checklists & Sightings Correlation
+```{python}
+# discard rows where individualCount is null
+observations_by_season_year = eod_data.loc[eod_data['individualCount'].notnull()]
+
+# count number of obervations (sightings) per season per year
+observations_by_season_year = observations_by_season_year.groupby(['eventYear','eventSeason'])['individualCount'].sum().sort_index().reset_index()
+observations_by_season_year = observations_by_season_year.pivot(index='eventYear', columns='eventSeason', values='individualCount')
+
+checklists_by_season_year = eod_data.groupby(['eventYear', 'eventSeason'])['checklist_id'].nunique().sort_index().reset_index()
+checklists_by_season_year = checklists_by_season_year.pivot(index='eventYear', columns='eventSeason', values='checklist_id')
+
+# correlation plot of checklists vs species sighted
+plt.figure(figsize=(10, 8))
+plt.scatter(checklists_by_season_year.values.flatten(), observations_by_season_year.values.flatten())
+plt.xscale('log')
+plt.yscale('log')
+plt.xlabel('Number of Checklists (Log Scale)')
+plt.ylabel('Number of Species Sighted (Log Scale)')
+plt.title('Correlation between Checklists and Species Sighted')
+plt.show();
+```
+- Relatively strong positive correlation between number of checklists and number of sightings
+- Key takeaway: where/when people are birding (producing checklists) correlates to more birds being seen
+    - Possibility for sampling bias (under/over)
+
+## Sightings by Location
+```{python}
+observations_by_country_year = eod_data.loc[eod_data['individualCount'].notnull()]
+observations_by_country_year = observations_by_country_year.groupby(['countryCode', 'eventYear'])['individualCount'].sum().reset_index()
+
+# see https://altair-viz.github.io/gallery/simple_line_chart.html
+line_chart1 = alt.Chart(observations_by_country_year).mark_line(point=True).encode(
+    x='eventYear:O',
+    y='individualCount:Q',
+    color=alt.Color('countryCode', scale=alt.Scale(scheme='category20c')), # see https://vega.github.io/vega/docs/schemes/#reference
+    tooltip=['countryCode', 'eventYear:O', 'individualCount:Q']
+).properties(
+    title='Country-wise Bird Sightings by Year',
+    width=700,
+    height=500
+)
+
+country_selection = alt.selection_point(fields=['countryCode'])
+
+countries_bar_chart = alt.Chart(observations_by_country_year).mark_bar().encode(
+    x=alt.X('countryCode', title='Country').scale(domain=sorted(observations_by_country_year['countryCode'].unique())),
+    y=alt.Y('individualCount:Q', title='Total Observations'),
+    color=alt.when(country_selection).then(alt.Color('countryCode:N').scale(domain=sorted(observations_by_country_year['countryCode'].unique()))).otherwise(alt.value('lightgray')),
+    tooltip=[alt.Tooltip('countryCode:N', title='Country'), alt.Tooltip('individualCount:Q', title='Total Observations')],
+).add_params(
+    country_selection
+).properties(
+    width=300,
+    height=400,
+    title='Total Sightings per Country').interactive()
+
+countries_bar_chart | line_chart1.add_params(country_selection).transform_filter(country_selection)
+```
+- 5 countries (Argentina, Peru, Colombia, Chile, Brazil) contain vast majority of sightings
+- Sampling bias: birds in these countries may be overcounted, birds in other countries may be undercounted
+
+## Sightings by Season
+```{python}
+observations_by_country_season = eod_data.loc[eod_data['individualCount'].notnull()]
+observations_by_country_season = observations_by_country_season.groupby(['countryCode', 'eventSeason'])['individualCount'].sum().reset_index()
+
+line_chart2 = alt.Chart(observations_by_country_season).mark_line(point=True).encode(
+    x='eventSeason:O',
+    y='individualCount:Q',
+    color=alt.Color('countryCode:N', scale=alt.Scale(scheme='category20c')),
+    tooltip=['countryCode:N', 'eventSeason:O', 'individualCount:Q']
+).properties(
+    title='Country-wise Bird Sightings by Season',
+    width=700,
+    height=500
+)
+
+countries_bar_chart | line_chart2.add_params(country_selection).transform_filter(country_selection)
+```
+- Most countries see peak sightings in Spring/Summer
+    - Colombia is only exception, peaking in Winter
+- Seems to be an association between country and season, and number of sightings
+:::
+
+# 1-Year Forecast
+::: {.panel-tabset}
+## Time Series
+```{python}
+frontalis_data = eod_data.loc[(eod_data['species'] == 'Pyrrhura frontalis') & (eod_data['individualCount'].notnull())]
+
+# format as time series
+frontalis_data['yearMonth'] = frontalis_data['eventDate'].dt.to_period('M').astype(str)
+frontalis_ts = frontalis_data.groupby('yearMonth')['individualCount'].sum()
+
+# plot individualCount over year-months with altair
+frontalis_chart = alt.Chart(frontalis_ts.reset_index()).mark_line(point=True).encode(
+    x='yearMonth:T',
+    y='individualCount:Q',
+    tooltip=['yearMonth:T', 'individualCount:Q']
+).properties(
+    title='Pyrrhura Frontalis Sightings over Time',
+    width=900,
+    height=500
+)
+frontalis_chart
+```
+- Goal: forecast sightings for Pyrrhura Frontalis (maroon-bellied conure) over next 12 months
+- Observe: sightings generally peak during April, June, and September
+    - Possible seasonality
+
+## Forecast
+```{python}
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+
+model = SARIMAX(
+    frontalis_ts,
+    order=(1, 1, 0), # non-seasonal parameters (p, d, q)
+    seasonal_order=(1, 1, 1, 12) # seasonal parameters (P, D, Q, s)
+)
+results = model.fit()
+
+forecast = results.get_forecast(steps=12) # forecast 12 months ahead
+forecast_index = pd.date_range(start=frontalis_ts.index[-1], periods=13, freq='ME')[1:] # adjust range for 12 months
+forecast_values = forecast.predicted_mean
+
+# plot forecast alongside historical data using altair
+forecast_df = pd.DataFrame({
+    'yearMonth': forecast_index,
+    'individualCount': forecast_values.values
+})
+
+forecast_chart = alt.Chart(forecast_df).mark_line(color='red', point=True).encode(
+    x='yearMonth:T',
+    y='individualCount:Q',
+    tooltip=['yearMonth:T', 'individualCount:Q']
+).properties(
+    title='Forecasted Sightings',
+    width=900,
+    height=500
+)
+frontalis_chart + forecast_chart
+```
+:::
